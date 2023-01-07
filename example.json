@@ -1,4 +1,4 @@
-example = [
+[
     {
         "state": "done",
         "final_mark": 100,
