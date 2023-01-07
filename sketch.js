@@ -1,3 +1,5 @@
+var started = false;
+
 function darken(c, amount) {
     return color(
         c.levels[0] * amount,
@@ -11,13 +13,16 @@ function saveToPng() {
     saveCanvas(c, "canvas", "png");
 }
 
-function setup() {
+async function setup() {
     c_completed = color("#00BABC");
     c_inprogress = color("#FFFFFF");
     c_notstarted = color("#9D9EA0");
-    let c = createCanvas(1920, 1080);
+    c_failed = color("#CC6256");
+    c = createCanvas(1920, 1080);
+    parsedData = await parseJson();
+    started = true;
+    console.log(parsedData);
     draw();
-    noLoop();
     // create a button to save the canvas
     let button = createButton("Save");
     button.mousePressed(saveToPng);
@@ -28,9 +33,9 @@ function getPositions(center, count, parentRadius) {
     // calculate the angle between each circle
     let angle = 360 / count;
     let offset;
-    if (count == 2)
-        offset = 0;
-    else
+    // if (parentRadius == 3)
+    //     offset = 0;
+    // else
         offset = -90;
     output = [];
 
@@ -55,12 +60,32 @@ function drawCircle(index, features, center) {
     let pos = getPositions({x: center.x, y: center.y}, features.length, (height / 7) * index / 2);
     for (let i = 0; i < features.length; i++) {
         let f = features[i];
+        if (typeof f === "string" || Array.isArray(f))
+            f = getHolyData(f);
         if (f.type === "ellipse") {
             // fill from f.fill with a darker outline
-            fill(darken(f.fill, 0.8));
+            fill(f.fill);
             strokeWeight(2);
-            stroke(f.fill);
+            stroke(f.outline);
             ellipse(pos[i].x, pos[i].y, f.radius, f.radius);
+            // draw a text that fits in the ellipse
+            fill("#FFFFFF");
+            noStroke();
+            textSize(f.radius / 8);
+            textAlign(CENTER, CENTER);
+            text(f.name, pos[i].x - f.radius / 2, pos[i].y - f.radius / 2, f.radius, f.radius);
+        } else if (f.type === "rectangle") {
+            // fill from f.fill with a darker outline
+            fill(f.fill);
+            strokeWeight(2);
+            stroke(f.outline);
+            rect(pos[i].x - f.width / 2, pos[i].y - f.height / 2, f.width, f.height, f.radius);
+            // draw a text that fits in the rectangle
+            fill("#FFFFFF");
+            noStroke();
+            textSize(10);
+            textAlign(CENTER, CENTER);
+            text(f.name, pos[i].x - f.width / 2, pos[i].y - f.height / 2, f.width, f.height);
         } else if (f.type === "circle") {
             // call recursively for every feature in f.config
             for (let c of Object.keys(f.config)) {
@@ -70,29 +95,78 @@ function drawCircle(index, features, center) {
     }
 }
 
+async function parseJson() {
+    // get the json by sending a request to 'https://projects.intra.42.fr/project_data.json'
+    // json = (await fetch('https://projects.intra.42.fr/project_data.json')).json();
+    // let data = JSON.parse(json);
+    // DO NOT WORK BECAUSE OF CORS AND AUTHENTICATION, SO I'LL JUST USE A LOCAL FILE FOR NOW
+
+    let data = example;
+    output = {};
+    for (let i = 0; i < data.length; i++) {
+        if (!data[i].rules.includes('You must not have validated any of quests common-core')) continue;
+        output[data[i].slug] = data[i];
+    }
+    return output;
+}
+
+function getHolyData(input) {
+    let outline = c_notstarted;
+    let fill = null;
+    let radius = 40;
+    if (typeof input === "string") {
+        let entry = parsedData[input];
+        if (entry.state == "done")
+            outline = c_completed;
+        else if (entry.state == "in_progress")
+        {
+            outline = c_inprogress;
+            fill = color("#46464c");
+        }
+        else if (entry.state == "failed")
+            outline = c_failed;
+        if (entry.slug == "ft_transcendence")
+            radius = 80;
+        else if (entry.slug.startsWith("cpp-module-0") && entry.slug != "cpp-module-08")
+            radius = 20;
+        fill = fill ?? darken(outline, 0.8);
+        if (entry.slug.startsWith("exam-rank-"))
+            return { type: "rectangle", height: 40, width: 80, outline: outline, fill: fill, radius: 10, name: entry.name };
+        return { type: "ellipse", radius: radius, outline: outline, fill: fill, name: entry.name };
+    } else if (Array.isArray(input)) {
+        // for each of the children, if one is done, return it
+        // else if one is in progress, return it
+        // else return the first one
+        for (let i = 0; i < input.length; i++) {
+            if (parsedData[input[i]].state == "done")
+                return getHolyData(input[i]);
+            else if (parsedData[input[i]].state == "in_progress")
+                return getHolyData(input[i]);
+        }
+        return getHolyData(input[0]);
+    } else if ((input.type === "circle")) {
+        return getHolyData(input.config[0][0]);
+    }
+}
+
 function getCircleColor(list) {
     // if all are complete return c_completed
     // if one is in progress return c_inprogress
     // else return c_notstarted
-    if (list.every((x) => x.fill == c_completed)) return c_completed;
-    if (list.some((x) => x.fill == c_inprogress)) return c_inprogress;
+    if (list.every((x) => getHolyData(x).outline == c_completed)) return c_completed;
+    if (list.some((x) => getHolyData(x).outline == c_inprogress)) return c_inprogress;
     return c_notstarted;
 }
 
 function getConfig() {
-    let p_complete = { type: "ellipse", radius: 40, fill: c_completed };
-    let p_inprogress = { type: "ellipse", radius: 40, fill: c_inprogress };
-    let p_notstarted = { type: "ellipse", radius: 40, fill: c_notstarted };
-    let cpp = { type: "ellipse", radius: 15, fill: c_notstarted } ;
-    
     return {
-        0: [p_complete],
-        1: [p_complete, p_complete, p_complete],
-        2: [p_complete, p_complete, p_complete],
-        3: [p_inprogress, p_inprogress],
-        4: [p_notstarted, p_notstarted, { type: "circle", config: {0: [p_notstarted], 0.5: [cpp, cpp, cpp, cpp, cpp, cpp, cpp, cpp]} }],
-        5: [p_notstarted, p_notstarted, p_notstarted],
-        6: [{ type: "ellipse", radius: 60, fill: c_notstarted }],
+        0: ["42cursus-libft"],
+        1: ["42cursus-ft_printf", "42cursus-get_next_line", "born2beroot"],
+        2: ["42cursus-push_swap", ["pipex", "minitalk"], "exam-rank-02", ["42cursus-fdf", "42cursus-fract-ol", "so_long"]],
+        3: ["exam-rank-03", "42cursus-philosophers", "42cursus-minishell"],
+        4: [["cub3d", "minirt"], "netpractice", "exam-rank-04", { type: "circle", config: {0: ["cpp-module-08"], 0.5: ["cpp-module-00", "cpp-module-01", "cpp-module-02", "cpp-module-03", "cpp-module-04", "cpp-module-05", "cpp-module-06", "cpp-module-07"]} }],
+        5: ["exam-rank-05", ["webserv", "ft_irc"], "ft_containers", "inception"],
+        6: ["ft_transcendence", "exam-rank-06"],
     };
 }
 
@@ -111,8 +185,11 @@ function draw() {
     // use cos and sin in degrees
     angleMode(DEGREES);
 
+    if (!started)
+        return;
     let config = getConfig();
     for (let i = 0; i < 7; i++) {
         drawCircle(i, config[i], { x: width / 2, y: height / 2 });
     }
+    noLoop();
 }
